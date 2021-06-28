@@ -23,12 +23,7 @@
 //--- CONSTANTS        ---------------------------
 //------------------------------------------------
 
-#define PIN_SENSOR_TEMP           6
-
-
-#define TIMEOUT_SHOW_HUM  1000
-#define TIMEOUT_SHOW_TEMP 2000
-#define TIMEOUT_SHOW_CO2  10000
+#define TIMEOUT_HEATING   10000
 
 // pin for pwm reading
 #define CO2_IN 10
@@ -56,9 +51,6 @@ bool GLB_timerMisc_expired=false;
 
 
 
-float GLBsensorDHTTemp=0.0;
-float GLBsensorDHTHum=0.0;
-
 int GLBsensorCO2ppm_uart = 0;
 int GLBsensorCO2temperature = 0;
 
@@ -66,23 +58,17 @@ int GLBsensorCO2temperature = 0;
 //--- GLOBAL FUNCTIONS ---------------------------
 //------------------------------------------------
 
-void display_temperature();
-bool display_welcome();
+void display_welcome();
  
-
 void STATE_welcome();
-void STATE_idle();
-void STATE_hum();
+void STATE_heating();
 void STATE_CO2();
 
-void STATE_button();
-void goto_idle();
+void goto_heating();
+
 // State pointer function
 void (*GLBptrStateFunc)();
 
-DHT GLBsensorDHT(PIN_SENSOR_TEMP, DHT22);
-
-void GLBcallbackLoggingTemp(void);
 void GLBcallbackLoggingCO2(void);
 //------------------------------------------------
 //-------    TIMER CALLBACKS     -----------------
@@ -122,50 +108,18 @@ void resetTimerMisc(void)
 //------------------------------------------------
 
 //-------------------------------------------------------
-void display_temperature(){
-
+void display_CO2(bool heating,int rem){
   u8g2.firstPage();
   do {
       u8g2.setFont(u8g2_font_logisoso16_tr );
       u8g2.setCursor(0,17);
-      u8g2.print("TEMPERATURA:");
-      u8g2.setFont(u8g2_font_fub42_tr );
-      u8g2.setCursor(0,64);
-      u8g2.print(GLBsensorDHTTemp,1);
-      /*u8g2.drawCircle(90, 5, 3, U8G2_DRAW_ALL);
-      u8g2.setCursor(90,64);
-      u8g2.print("C");*/
-   
-  } while ( u8g2.nextPage() );
-}
-//-------------------------------------------------------
-void display_humidity(){
-
-  u8g2.firstPage();
-  do {
-      u8g2.setFont(u8g2_font_logisoso16_tr );
-      u8g2.setCursor(20,17);
-      u8g2.print("HUMEDAD:");
-      u8g2.setFont(u8g2_font_fub42_tr );
-      u8g2.setCursor(0,64);
-      u8g2.print(GLBsensorDHTHum,1);
-      /*u8g2.drawCircle(90, 5, 3, U8G2_DRAW_ALL);
-      u8g2.setCursor(90,64);
-      u8g2.print("C");*/
-   
-  } while ( u8g2.nextPage() );
-}
-
-//-------------------------------------------------------
-void display_CO2(){
-
-  u8g2.firstPage();
-  do {
-      u8g2.setFont(u8g2_font_logisoso16_tr );
-      u8g2.setCursor(0,17);
-      u8g2.print("TEMP:");
+      u8g2.print("T:");
       u8g2.print(GLBsensorCO2temperature);
-      u8g2.print(" CO2:");
+      if (heating){
+        u8g2.print(" H:");
+        u8g2.print(rem);}
+      else
+        u8g2.print(" CO2:");
       u8g2.setFont(u8g2_font_fub42_tr );
       u8g2.setCursor(0,64);
       u8g2.print(GLBsensorCO2ppm_uart);
@@ -178,31 +132,18 @@ void setup() {
   Serial.begin(9600);
   Serial.println(F("BOOT"));
 
-
-
-  Serial.println(F("B DHT22"));
-  GLBsensorDHT.begin();
-
-//  pinMode(PIN_BUTTON_RED, INPUT_PULLUP);
-
   Serial.println(F("B u8g2"));
   u8g2.begin(); 
   u8g2.setFontMode(0);		// enable transparent mode, which is faster
-  //u8g2.setDisplayRotation(U8G2_R2);
 
   resetTimerMisc();
   GLBptrStateFunc=STATE_welcome; 
 
   Serial.println(F("BD"));
 
-
 #ifdef SPCO2_DEBUG_STILLALIVE
   mainTimers.setInterval(2000,GLBcallbackLogging);
 #endif 
-
-#ifdef SPCO2_DEBUG_DHT
-  mainTimers.setInterval(5000,GLBcallbackLoggingTemp);
-#endif  
 
 #ifdef SPCO2_DEBUG_CO2
   mainTimers.setInterval(5000,GLBcallbackLoggingCO2);
@@ -219,163 +160,51 @@ void setup() {
 }
 
 //-------------------------------------------------
-void goto_idle()
+void goto_heating()
 {
   
   u8g2.clearBuffer();
   #ifdef SPCO2_DEBUG_STATES
-  Serial.print(F("NST_idle"));
+  Serial.print(F("NST_heating"));
   #endif
   resetTimerMisc();
-  GLBptrStateFunc=STATE_idle; 
+  GLBptrStateFunc=STATE_heating; 
 }
 
 
 //-------------------------------------------------
 void STATE_welcome()
 {
-  if (display_welcome())
-  {
-    goto_idle();  
-  }
+  display_welcome();
+  goto_heating();  
 }
 
 //-------------------------------------------------
-void STATE_idle()
+void STATE_heating()
 {
-  display_temperature();
+  display_CO2(co2.isPreHeatingReal(),co2.remainingPreHeating());
 
-  if (GLB_timerMisc == -1)
-  {
-    GLB_timerMisc=mainTimers.setTimeout(TIMEOUT_SHOW_TEMP,GLBcallbackTimeoutMisc);
-  }
-
-  if (GLB_timerMisc_expired){
-    u8g2.clearBuffer();
-    #ifdef SPCO2_DEBUG_STATES
-    Serial.print(F("NST_HUM"));
-    #endif
-    resetTimerMisc();
-    GLBptrStateFunc=STATE_hum; 
-  }
-
-/*  if (bBluePressed || bRedPressed || bGreenPressed ){  
-    GLBptrStateFunc=STATE_button; 
-    u8g2.clearBuffer();
-  }*/
-}
-
-//-------------------------------------------------
-void STATE_hum()
-{
-  display_humidity();
-
-  if   (GLB_timerMisc == -1)
-  {
-    GLB_timerMisc=mainTimers.setTimeout(TIMEOUT_SHOW_HUM,GLBcallbackTimeoutMisc);
-  }
-
-  if (GLB_timerMisc_expired){
+  if (!co2.isPreHeatingReal()){
     u8g2.clearBuffer();
     #ifdef SPCO2_DEBUG_STATES
     Serial.print(F("NST_CO2"));
     #endif
-    resetTimerMisc();
     GLBptrStateFunc=STATE_CO2; 
   }
+
 }
 
 //-------------------------------------------------
 void STATE_CO2()
 {
-  display_CO2();
-
-  if   (GLB_timerMisc == -1)
-  {
-    GLB_timerMisc=mainTimers.setTimeout(TIMEOUT_SHOW_CO2,GLBcallbackTimeoutMisc);
-  }
-
-  if (GLB_timerMisc_expired){
-    GLB_timerMisc_expired=false;
-    goto_idle();
-    return;
-  }
+  display_CO2(false,0);
 }
 
-//-------------------------------------------------
-void STATE_button()
+
+
+//-----------------------------------------------
+void displayBig(char *msg)
 {
-  
-/*  display_button();
-
-  if   (GLB_timerMisc == -1)
-  {
-    GLB_timerMisc=mainTimers.setTimeout(TIMEOUT_BUTTON,GLBcallbackTimeoutMisc);
-  }
-
-  if (bBluePressed || bRedPressed || bGreenPressed )
-  {
-    resetTimerMisc();
-  }
-
-  if (GLB_timerMisc_expired){
-    GLB_timerMisc_expired=false;
-    goto_idle();
-    return;
-  }*/
-}
-
-
-
-
-
-unsigned long t_starting_welcome=0;
-int wsBK=0;
-bool display_welcome(){
-  unsigned long t;
-  int ws=0;
-
-  t=millis();
-  char msg[6];
-  for (int i=0;i<6;i++) msg[i]=' ';
-  msg[5]=0;
-
-  if (t_starting_welcome ==0)
-    t_starting_welcome=t;
-   
-  t=t-t_starting_welcome;  
-
-  if (t<100){
-    msg[0]='H';  
-    ws=0;}  
-  else if (t<100){
-    msg[1]='O';  
-    ws=1;}    
-  else if (t<200){
-    msg[2]='L';  
-    ws=2;}  
-  else if (t<300){
-    msg[3]='A';  
-    ws=3;}  
-  else if (t<40){
-    msg[4]='!';  
-    ws=4;}  
-  else if (t<500){
-    ws=5;}  
-  else if (t<600){
-    strcpy(msg,"HOLA!"); 
-    ws=6;}  
-  else if (t<800){
-    ws=7;}  
-  else if (t<100){
-    strcpy(msg,"HOLA!"); 
-    ws=8;}  
-  else if (t<1200){
-    return true; }
-
-  if (wsBK != ws)   u8g2.clearBuffer();   
-  wsBK=ws;
-  
   u8g2.firstPage();
   do { 
     u8g2.setFont(u8g2_font_fub42_tr);	
@@ -383,29 +212,28 @@ bool display_welcome(){
     u8g2.print(msg);
     
   } while ( u8g2.nextPage() );
-  
-  return false;
-
 }
 
-//------------------------------------------------
-#ifdef SPCO2_DEBUG_DHT
-void GLBcallbackLoggingTemp(void)
-{
-  Serial.println(F("DEBUG: Temp..."));
-  Serial.print(" DTH: Temperature:");
-  Serial.print(GLBsensorDHTTemp);
-  Serial.print(" Celsius. Humidity(%):");
-  Serial.println(GLBsensorDHTHum);
+void display_welcome(){
+
+  displayBig("CO2");
+  delay(50);
+  displayBig("- ");
+  delay(50);
+  displayBig("--");
+  delay(50);
+  displayBig("---");
+  delay(50);
+  displayBig("----");
+  delay(50);  displayBig("CO2");
+  delay(200);
 }
-#endif
+
 
 //------------------------------------------------
 #ifdef SPCO2_DEBUG_CO2
 void GLBcallbackLoggingCO2(void)
 {
-
-
   Serial.print("PPMuart: ");
   if (GLBsensorCO2ppm_uart > 0) {
     Serial.print(GLBsensorCO2ppm_uart);
@@ -436,23 +264,22 @@ void loop() {
 #ifdef SPCO2_DEBUG_LOOP  
   Serial.print("D");
 #endif
-  GLBsensorDHTTemp = GLBsensorDHT.readTemperature();
-  GLBsensorDHTHum  = GLBsensorDHT.readHumidity();
 
 #ifdef SPCO2_DEBUG_LOOP  
   Serial.print("C");
 #endif
-
+/*
   if (co2.isPreHeating()) {
     GLBsensorCO2ppm_uart = 0;
     GLBsensorCO2temperature = 0;
   }
   else {
     GLBsensorCO2ppm_uart = co2.readCO2UART();
-    //useless GLBsensorCO2ppm_pwm = co2.readCO2PWM();
     GLBsensorCO2temperature = co2.getLastTemperature();
   }
-
+*/
+  GLBsensorCO2ppm_uart = co2.readCO2UART();
+  GLBsensorCO2temperature = co2.getLastTemperature();
 
 
   //  bRedPressed   = (digitalRead(PIN_BUTTON_RED)  ==LOW);
